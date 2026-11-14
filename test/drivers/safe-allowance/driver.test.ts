@@ -159,3 +159,27 @@ test("with nothing in flight the same payout proceeds to broadcast", async () =>
   assert.equal(ledger.entries.get("k")?.status, "settled");
   assert.equal(ledger.entries.get("k")?.transaction, polled, "the recorded hash is the one polled");
 });
+
+test("a payout is refused when the RPC endpoint reports a mismatched chain ID", async () => {
+  fakeRpc({
+    eth_chainId: "0x1", // reports mainnet (1) instead of Sepolia (11155111)
+    "eth_getTransactionCount:pending": "0x7",
+    "eth_getTransactionCount:latest": "0x7",
+    eth_gasPrice: "0x3b9aca00",
+    eth_maxPriorityFeePerGas: "0x59682f00",
+  });
+  const registry = new DriverRegistry(1);
+  registry.register(driver());
+  const ledger = memoryLedger();
+
+  await assert.rejects(
+    registry.settle(PAYLOAD, REQUIREMENTS, { idempotencyKey: "k", ledger }),
+    (err: Error & { code?: string }) => {
+      assert.equal(err.code, "RPC_UNAVAILABLE");
+      assert.match(err.message, /reported chain ID 1/);
+      assert.match(err.message, /driver is configured for chain ID 11155111/);
+      return true;
+    },
+  );
+  assert.equal(ledger.entries.size, 0, "nothing is recorded");
+});

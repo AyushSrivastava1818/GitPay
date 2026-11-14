@@ -4938,12 +4938,19 @@ class EvmSender {
      * exists for calls that can fail without reverting.
      */
     async prepare(call, checkResult) {
-        const [pendingHex, latestHex, feeHex, tipHex] = await Promise.all([
+        const [pendingHex, latestHex, feeHex, tipHex, rpcChainIdHex] = await Promise.all([
             this.rpc.hex("eth_getTransactionCount", [this.address, "pending"]),
             this.rpc.hex("eth_getTransactionCount", [this.address, "latest"]),
             this.rpc.hex("eth_gasPrice", []),
             this.rpc.hex("eth_maxPriorityFeePerGas", []).catch(() => toHex(1500000000n)),
+            this.rpc.hex("eth_chainId", []).catch(() => undefined),
         ]);
+        if (rpcChainIdHex !== undefined) {
+            const rpcChainId = fromHex(rpcChainIdHex);
+            if (rpcChainId !== this.config.chainId) {
+                throw Object.assign(new Error(`RPC endpoint reported chain ID ${rpcChainId}, but driver is configured for chain ID ${this.config.chainId} (${this.config.network}). Refusing to sign transaction on mismatched chain.`), { code: "RPC_UNAVAILABLE" });
+            }
+        }
         const pending = fromHex(pendingHex);
         const latest = fromHex(latestHex);
         /**
@@ -5830,6 +5837,39 @@ function canonicalNetwork(network) {
 function lookupChain(network) {
     return CHAINS[network];
 }
+/**
+ * Validates that an explicit chain ID does not conflict with the network.
+ * If the network is registered in the chain registry, the chain ID must match
+ * the registry's expected chain ID.
+ * If the network is an EVM CAIP-2 identifier (eip155:<chainId>), the chain ID
+ * must match the reference in the identifier.
+ */
+function validateChainId(network, chainId) {
+    let parsed;
+    try {
+        parsed = BigInt(chainId);
+    }
+    catch {
+        throw new Error(`Invalid chain_id "${chainId}": must be a valid integer`);
+    }
+    const chain = lookupChain(network);
+    if (chain !== undefined && chain.chainId !== parsed) {
+        throw new Error(`Configured chain_id "${chainId}" conflicts with expected chain ID "${chain.chainId}" for network ${network}`);
+    }
+    const [namespace, reference] = network.split(":");
+    if (namespace === "eip155" && reference !== undefined) {
+        let expected;
+        try {
+            expected = BigInt(reference);
+        }
+        catch {
+            expected = undefined;
+        }
+        if (expected !== undefined && expected !== parsed) {
+            throw new Error(`Configured chain_id "${chainId}" conflicts with CAIP-2 network reference "${reference}" for ${network}`);
+        }
+    }
+}
 
 ;// CONCATENATED MODULE: ./src/drivers/registry.ts
 
@@ -6182,6 +6222,10 @@ async function run() {
      * asks for its own inputs: `safe` under `allowance`, `payer` under `approve`.
      * `from` is the account the funds leave, shown on the receipt.
      */
+    const explicitChainId = readInput("chain_id");
+    if (explicitChainId !== undefined) {
+        validateChainId(intent.network, explicitChainId);
+    }
     const evm = () => ({
         network: intent.network,
         chainId: BigInt(derived("chain_id", chain?.chainId.toString())),

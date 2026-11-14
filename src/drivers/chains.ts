@@ -96,3 +96,41 @@ export function canonicalNetwork(network: string): string {
 export function lookupChain(network: string): ChainRecord | undefined {
   return CHAINS[network];
 }
+
+/**
+ * Validates that an explicit chain ID does not conflict with the network.
+ * If the network is registered in the chain registry, the chain ID must match
+ * the registry's expected chain ID.
+ * If the network is an EVM CAIP-2 identifier (eip155:<chainId>), the chain ID
+ * must match the reference in the identifier.
+ */
+export function validateChainId(network: string, chainId: bigint | string | number): void {
+  let parsed: bigint;
+  try {
+    parsed = BigInt(chainId);
+  } catch {
+    throw new Error(`Invalid chain_id "${chainId}": must be a valid integer`);
+  }
+
+  const chain = lookupChain(network);
+  if (chain !== undefined && chain.chainId !== parsed) {
+    throw new Error(
+      `Configured chain_id "${chainId}" conflicts with expected chain ID "${chain.chainId}" for network ${network}`,
+    );
+  }
+
+  const [namespace, reference] = network.split(":");
+  if (namespace === "eip155" && reference !== undefined) {
+    let expected: bigint | undefined;
+    try {
+      expected = BigInt(reference);
+    } catch {
+      expected = undefined;
+    }
+    if (expected !== undefined && expected !== parsed) {
+      throw new Error(
+        `Configured chain_id "${chainId}" conflicts with CAIP-2 network reference "${reference}" for ${network}`,
+      );
+    }
+  }
+}

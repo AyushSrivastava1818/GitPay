@@ -52,12 +52,25 @@ export class EvmSender {
     call: EvmCall,
     checkResult?: (returned: string) => void,
   ): Promise<PreparedSettlement> {
-    const [pendingHex, latestHex, feeHex, tipHex] = await Promise.all([
+    const [pendingHex, latestHex, feeHex, tipHex, rpcChainIdHex] = await Promise.all([
       this.rpc.hex("eth_getTransactionCount", [this.address, "pending"]),
       this.rpc.hex("eth_getTransactionCount", [this.address, "latest"]),
       this.rpc.hex("eth_gasPrice", []),
       this.rpc.hex("eth_maxPriorityFeePerGas", []).catch(() => toHex(1_500_000_000n)),
+      this.rpc.hex("eth_chainId", []).catch(() => undefined),
     ]);
+
+    if (rpcChainIdHex !== undefined) {
+      const rpcChainId = fromHex(rpcChainIdHex);
+      if (rpcChainId !== this.config.chainId) {
+        throw Object.assign(
+          new Error(
+            `RPC endpoint reported chain ID ${rpcChainId}, but driver is configured for chain ID ${this.config.chainId} (${this.config.network}). Refusing to sign transaction on mismatched chain.`,
+          ),
+          { code: "RPC_UNAVAILABLE" satisfies ErrorCode },
+        );
+      }
+    }
 
     const pending = fromHex(pendingHex);
     const latest = fromHex(latestHex);

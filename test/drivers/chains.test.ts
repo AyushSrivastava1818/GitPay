@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { canonicalNetwork, lookupChain, supportedNetworks } from "../../src/drivers/chains.js";
+import { canonicalNetwork, lookupChain, supportedNetworks, validateChainId } from "../../src/drivers/chains.js";
 
 test("an alias resolves to its CAIP-2 identifier", () => {
   assert.equal(canonicalNetwork("sepolia"), "eip155:11155111");
@@ -51,4 +51,35 @@ test("a record is self-consistent with the key it is stored under", () => {
   assert.equal(chain.chainId.toString(), chain.network.split(":")[1]);
   assert.match(chain.allowanceModule, /^0x[0-9a-fA-F]{40}$/);
   assert.match(chain.explorer, /^https:\/\//);
+});
+
+test("validateChainId accepts matching chain ID for registered network", () => {
+  assert.doesNotThrow(() => validateChainId("eip155:11155111", "11155111"));
+  assert.doesNotThrow(() => validateChainId("eip155:11155111", 11155111n));
+});
+
+test("validateChainId rejects mismatched chain ID for registered network", () => {
+  assert.throws(
+    () => validateChainId("eip155:11155111", "1"),
+    /conflicts with expected chain ID "11155111" for network eip155:11155111/,
+  );
+});
+
+test("validateChainId validates unregistered CAIP-2 eip155 network reference", () => {
+  assert.doesNotThrow(() => validateChainId("eip155:1", "1"));
+  assert.throws(
+    () => validateChainId("eip155:1", "2"),
+    /conflicts with CAIP-2 network reference "1" for eip155:1/,
+  );
+});
+
+test("validateChainId preserves custom unregistered non-eip155 network", () => {
+  assert.doesNotThrow(() => validateChainId("custom:myrail", "999"));
+});
+
+test("validateChainId rejects invalid non-integer chain ID", () => {
+  assert.throws(
+    () => validateChainId("eip155:11155111", "not-a-number"),
+    /Invalid chain_id "not-a-number": must be a valid integer/,
+  );
 });

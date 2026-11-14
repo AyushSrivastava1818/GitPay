@@ -18,7 +18,7 @@ import { parseIntent } from "./core/intent.js";
 import { withAliases } from "./core/ledger.js";
 import type { LedgerEntry, SettlementLedger } from "./core/ledger.js";
 import { assertAllowed, evaluate, format } from "./core/policy.js";
-import { canonicalNetwork, lookupChain } from "./drivers/chains.js";
+import { canonicalNetwork, lookupChain, validateChainId } from "./drivers/chains.js";
 import { DriverRegistry } from "./drivers/registry.js";
 import type { SettlementDriver } from "./drivers/types.js";
 import { INLINE_PREFIX, InlineAddressResolver, ResolverChain } from "./resolvers/index.js";
@@ -222,6 +222,11 @@ async function run(): Promise<number> {
    * asks for its own inputs: `safe` under `allowance`, `payer` under `approve`.
    * `from` is the account the funds leave, shown on the receipt.
    */
+  const explicitChainId = input("chain_id");
+  if (explicitChainId !== undefined) {
+    validateChainId(intent.network, explicitChainId);
+  }
+
   const evm = () => ({
     network: intent.network,
     chainId: BigInt(derived("chain_id", chain?.chainId.toString())),
