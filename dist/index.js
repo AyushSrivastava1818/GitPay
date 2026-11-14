@@ -535,8 +535,13 @@ function parseReceiptKey(body) {
  * access, so the ledger also confirms it with GitHub before believing one.
  */
 const TRUSTED_ASSOCIATIONS = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
-function isTrustedReceiptAuthor(comment) {
-    if ((comment.user?.type ?? "") === "Bot")
+function isGitPayBot(comment, expectedBotLogin) {
+    const login = comment.user?.login?.toLowerCase();
+    const trustedBot = (expectedBotLogin || "github-actions[bot]").toLowerCase();
+    return (comment.user?.type ?? "") === "Bot" && login === trustedBot;
+}
+function isTrustedReceiptAuthor(comment, expectedBotLogin) {
+    if (isGitPayBot(comment, expectedBotLogin))
         return true;
     return TRUSTED_ASSOCIATIONS.has((comment.author_association ?? "").toUpperCase());
 }
@@ -550,14 +555,14 @@ const LEGACY_TRANSACTION = /^- Transaction: `([^`]+)`/m;
  * payout as still broadcasting, which is safe but wrong, and would send someone
  * to a block explorer for no reason.
  */
-function findReceipt(comments, key) {
+function findReceipt(comments, key, expectedBotLogin) {
     let found;
     for (const comment of comments) {
         const body = comment.body ?? "";
         const marker = parseMarker(body);
         if (marker["key"] === undefined || !sameKey(marker["key"], key))
             continue;
-        if (!isTrustedReceiptAuthor(comment))
+        if (!isTrustedReceiptAuthor(comment, expectedBotLogin))
             continue;
         const transaction = marker["tx"] ?? LEGACY_TRANSACTION.exec(body)?.[1];
         // The prose is read only for legacy receipts whose marker carries no
@@ -612,7 +617,7 @@ class PullRequestReceiptLedger {
         const unvouched = [];
         for (let page = 1; page <= 20; page += 1) {
             const batch = await githubJson(`${this.base()}?per_page=100&page=${page}`, this.ref.token);
-            const found = findReceipt(await this.vouched(batch, key, writers, unvouched), key);
+            const found = findReceipt(await this.vouched(batch, key, writers, unvouched), key, this.ref.botLogin);
             if (found)
                 return found;
             if (batch.length < 100)
@@ -635,7 +640,7 @@ class PullRequestReceiptLedger {
             if (recorded === undefined || !sameKey(recorded, key) || !isTrustedReceiptAuthor(comment)) {
                 continue;
             }
-            if (comment.user?.type === "Bot" || associationImpliesWrite(comment.author_association)) {
+            if (isGitPayBot(comment, this.ref.botLogin) || associationImpliesWrite(comment.author_association)) {
                 kept.push(comment);
                 continue;
             }

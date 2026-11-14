@@ -58,6 +58,8 @@ test("a round differences makes it a different payout", () => {
 
 test("only bots and people who can already spend are believed", () => {
   assert.ok(isTrustedReceiptAuthor(BOT));
+  assert.ok(isTrustedReceiptAuthor({ user: { type: "Bot", login: "custom-bot[bot]" } }, "custom-bot[bot]"));
+  assert.ok(!isTrustedReceiptAuthor({ user: { type: "Bot", login: "other-bot[bot]" }, author_association: "NONE" }));
   assert.ok(isTrustedReceiptAuthor({ author_association: "OWNER" }));
   assert.ok(isTrustedReceiptAuthor({ author_association: "collaborator" }));
   assert.ok(!isTrustedReceiptAuthor({ author_association: "CONTRIBUTOR" }));
@@ -215,4 +217,23 @@ test("GitPay's own bot receipts and unrelated comments cost no permission lookup
   );
   assert.equal((await ledger().lookup(KEY))?.status, "settled");
   assert.deepEqual(looked, []);
+});
+
+test("an untrusted bot cannot forge receipts without write access", async () => {
+  fakeGitHub(
+    [{ body: receipt, author_association: "MEMBER", user: { type: "Bot", login: "preview-bot[bot]" } }],
+    { "preview-bot[bot]": "read" },
+  );
+  await assert.rejects(
+    ledger().lookup(KEY),
+    /posted by preview-bot\[bot\], who cannot push to the repository now/,
+  );
+});
+
+test("an untrusted bot with write access is vouched", async () => {
+  fakeGitHub(
+    [{ body: receipt, author_association: "MEMBER", user: { type: "Bot", login: "trusted-ci[bot]" } }],
+    { "trusted-ci[bot]": "write" },
+  );
+  assert.equal((await ledger().lookup(KEY))?.transaction, "0xabc");
 });

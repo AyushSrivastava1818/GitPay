@@ -136,8 +136,14 @@ export interface CommentLike {
  */
 const TRUSTED_ASSOCIATIONS = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
 
-export function isTrustedReceiptAuthor(comment: CommentLike): boolean {
-  if ((comment.user?.type ?? "") === "Bot") return true;
+export function isGitPayBot(comment: CommentLike, expectedBotLogin?: string): boolean {
+  const login = comment.user?.login?.toLowerCase();
+  const trustedBot = (expectedBotLogin || "github-actions[bot]").toLowerCase();
+  return (comment.user?.type ?? "") === "Bot" && login === trustedBot;
+}
+
+export function isTrustedReceiptAuthor(comment: CommentLike, expectedBotLogin?: string): boolean {
+  if (isGitPayBot(comment, expectedBotLogin)) return true;
   return TRUSTED_ASSOCIATIONS.has((comment.author_association ?? "").toUpperCase());
 }
 
@@ -152,14 +158,18 @@ const LEGACY_TRANSACTION = /^- Transaction: `([^`]+)`/m;
  * payout as still broadcasting, which is safe but wrong, and would send someone
  * to a block explorer for no reason.
  */
-export function findReceipt(comments: readonly CommentLike[], key: string): Receipt | undefined {
+export function findReceipt(
+  comments: readonly CommentLike[],
+  key: string,
+  expectedBotLogin?: string,
+): Receipt | undefined {
   let found: Receipt | undefined;
 
   for (const comment of comments) {
     const body = comment.body ?? "";
     const marker = parseMarker(body);
     if (marker["key"] === undefined || !sameKey(marker["key"], key)) continue;
-    if (!isTrustedReceiptAuthor(comment)) continue;
+    if (!isTrustedReceiptAuthor(comment, expectedBotLogin)) continue;
 
     const transaction = marker["tx"] ?? LEGACY_TRANSACTION.exec(body)?.[1];
     // The prose is read only for legacy receipts whose marker carries no
@@ -188,6 +198,7 @@ export interface PullRequestRef {
   number: number;
   token: string;
   apiBase?: string;
+  botLogin?: string;
   /** Presentation only — never consulted when deciding if a payout happened. */
   context?: PayoutContext;
 }
@@ -231,7 +242,7 @@ export class PullRequestReceiptLedger implements SettlementLedger {
     const unvouched: string[] = [];
     for (let page = 1; page <= 20; page += 1) {
       const batch = await githubJson(`${this.base()}?per_page=100&page=${page}`, this.ref.token);
-      const found = findReceipt(await this.vouched(batch, key, writers, unvouched), key);
+      const found = findReceipt(await this.vouched(batch, key, writers, unvouched), key, this.ref.botLogin);
       if (found) return found;
       if (batch.length < 100) return this.refuseUnvouched(key, unvouched);
     }
@@ -260,7 +271,7 @@ export class PullRequestReceiptLedger implements SettlementLedger {
       if (recorded === undefined || !sameKey(recorded, key) || !isTrustedReceiptAuthor(comment)) {
         continue;
       }
-      if (comment.user?.type === "Bot" || associationImpliesWrite(comment.author_association)) {
+      if (isGitPayBot(comment, this.ref.botLogin) || associationImpliesWrite(comment.author_association)) {
         kept.push(comment);
         continue;
       }
